@@ -129,6 +129,11 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+input_data/
+output_data/
+output_text_data/
+dummies/
+original/
 
 # Spyder project settings
 .spyderproject

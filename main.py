@@ -7,6 +7,9 @@ import asyncio
 import aiofiles
 from typing import List
 import time
+from PyPDF2 import PdfReader, PdfWriter
+from bs4 import BeautifulSoup
+import re
 
 app = FastAPI()
 
@@ -23,6 +26,65 @@ class DocumentResponse(BaseModel):
 async def root():
     return RedirectResponse(url="/docs")
 
+# Endpoint to convert HTML files to TXT and group by prefix
+@app.post("/convert_html_to_txt")
+async def convert_html_to_txt():
+    input_folder = "output_data"
+    output_folder = "output_text_data"
+    
+    # Create output folder if it doesn't exist
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    # Group files by prefix (e.g., "06-공과대학")
+    file_groups = {}
+    files = [f for f in os.listdir(input_folder) if f.endswith(".html")]
+
+    for file_name in files:
+        prefix = "-".join(file_name.split('-')[:2])  # Extract common prefix like "06-공과대학"
+        if prefix not in file_groups:
+            file_groups[prefix] = []
+        file_groups[prefix].append(file_name)
+
+    # Process each group and convert to a single text file
+    for prefix, group_files in file_groups.items():
+        # Sort the files in ascending order based on the numeric part of the filename
+        def extract_numeric_part(file_name):
+            match = re.search(r'(\d+)', file_name.split('-', 2)[-1])
+            return int(match.group()) if match else float('inf')  # Return a very large number if no numeric part is found
+
+        group_files.sort(key=extract_numeric_part)
+
+        # Determine output file name without the `.pdf_parsed.html` suffix
+        base_prefix = prefix if len(group_files) > 1 else group_files[0].split(".pdf_parsed")[0]
+
+        txt_output_path = os.path.join(output_folder, f"{base_prefix}.txt")
+        
+        async with aiofiles.open(txt_output_path, 'w') as txt_file:
+            for index, file_name in enumerate(group_files):
+                input_path = os.path.join(input_folder, file_name)
+
+                # Extract text content from HTML
+                async with aiofiles.open(input_path, 'r') as html_file:
+                    html_content = await html_file.read()
+
+                soup = BeautifulSoup(html_content, "html.parser")
+                text_content = soup.get_text(strip=True)
+
+                # Write cleaned text to the TXT file with consistent headers and spacing
+                if index > 0:
+                    # Add 10 lines of spacing before each new section, except the first
+                    await txt_file.write('\n' * 10)
+
+                # Write the header derived from the filename
+                suffix = file_name.split('-', 2)[-1].split(".pdf_parsed")[0]
+                await txt_file.write(f"######{suffix}######\n")
+
+                # Write the cleaned text content
+                await txt_file.write(text_content)
+
+    return {"status": "Conversion completed", "output_directory": output_folder}
+
 # Endpoint to initiate document parsing asynchronously
 @app.post("/parse_documents")
 async def parse_documents(background_tasks: BackgroundTasks):
@@ -36,9 +98,43 @@ async def parse_documents(background_tasks: BackgroundTasks):
     for file_name in files:
         input_path = os.path.join(input_folder, file_name)
         output_path = os.path.join(output_folder, f"{file_name}_parsed")
-        background_tasks.add_task(call_upstage_api, input_path, output_path)
+        
+        if os.path.getsize(input_path) > 50 * 1024 * 1024:  # If file size > 50MB, split it
+            split_files = split_pdf(input_path)
+            for split_file in split_files:
+                split_output_path = f"{split_file}_parsed"
+                background_tasks.add_task(call_upstage_api, split_file, split_output_path)
+        else:
+            background_tasks.add_task(call_upstage_api, input_path, output_path)
 
     return {"status": "Processing initiated"}
+
+# Function to split a large PDF into smaller chunks
+def split_pdf(input_file: str) -> List[str]:
+    split_files = []
+    reader = PdfReader(input_file)
+    total_pages = len(reader.pages)
+
+    output_dir = "split_data"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Split into chunks of 10 pages or smaller if the file is large
+    pages_per_chunk = 10
+    for start_page in range(0, total_pages, pages_per_chunk):
+        writer = PdfWriter()
+        end_page = min(start_page + pages_per_chunk, total_pages)
+        
+        for page_num in range(start_page, end_page):
+            writer.add_page(reader.pages[page_num])
+
+        split_file_path = os.path.join(output_dir, f"{os.path.basename(input_file)}_part_{start_page//pages_per_chunk + 1}.pdf")
+        with open(split_file_path, "wb") as output_pdf:
+            writer.write(output_pdf)
+        
+        split_files.append(split_file_path)
+
+    return split_files
 
 # Asynchronous function to call the Upstage API
 async def call_upstage_api(input_file: str, output_file: str):
