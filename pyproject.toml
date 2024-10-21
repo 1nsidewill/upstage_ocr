@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "upstage-ocr"
+version = "0.1.0"
+description = ""
+authors = ["Yi Will"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "3.11.10"
+fastapi = "^0.115.2"
+uvicorn = "^0.32.0"
+requests = "^2.32.3"
+aiofiles = "^24.1.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
