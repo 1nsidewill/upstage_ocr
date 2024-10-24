@@ -68,7 +68,18 @@ async def convert_html_to_txt():
                 async with aiofiles.open(input_path, 'r') as html_file:
                     html_content = await html_file.read()
 
+                # Use BeautifulSoup to parse the HTML
                 soup = BeautifulSoup(html_content, "html.parser")
+
+                # Extract 'alt' text from <img> tags and remove the <img> tags
+                for img_tag in soup.find_all('img'):
+                    if img_tag.has_attr('alt'):
+                        alt_text = img_tag['alt']
+                        # Insert the alt text directly in place of the img tag
+                        img_tag.insert_before(alt_text)
+                    img_tag.decompose()  # Remove the img tag completely
+
+                # Extract all the text content from the cleaned HTML
                 text_content = soup.get_text(strip=True)
 
                 # Write cleaned text to the TXT file with consistent headers and spacing
